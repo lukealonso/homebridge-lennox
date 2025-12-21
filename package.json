@@ -4,10 +4,15 @@
   "version": "0.1.0",
   "description": "Homebridge plugin for Lennox S30/S40/E30/M30 thermostats via local LAN connection",
   "license": "MIT",
+  "author": "Luke Alonso",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/lukealonso/homebridge-lennox.git"
   },
+  "bugs": {
+    "url": "https://github.com/lukealonso/homebridge-lennox/issues"
+  },
+  "homepage": "https://github.com/lukealonso/homebridge-lennox#readme",
   "engines": {
     "node": ">=18.0.0",
     "homebridge": ">=1.6.0"
