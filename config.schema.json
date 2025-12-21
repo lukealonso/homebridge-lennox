@@ -1,0 +1,100 @@
+{
+  "pluginAlias": "Lennox",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Lennox S30/S40/E30/M30 thermostat control via local LAN connection. No cloud required.",
+  "footerDisplay": "For isolation and stability, consider running as a child bridge under Bridge Settings.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "thermostats": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "ipAddress": {
+              "title": "Host",
+              "type": "string",
+              "required": true,
+              "description": "IP address or hostname of the thermostat"
+            }
+          }
+        },
+        "default": []
+      },
+      "pollInterval": {
+        "title": "Poll Interval (seconds)",
+        "type": "integer",
+        "default": 30,
+        "minimum": 10,
+        "maximum": 300,
+        "description": "How often to poll thermostats for updates"
+      },
+      "accessories": {
+        "title": "Optional Accessories",
+        "type": "object",
+        "properties": {
+          "awaySwitch": {
+            "title": "Away Mode Switch",
+            "type": "boolean",
+            "default": false,
+            "description": "Expose a switch to control manual away mode"
+          },
+          "ventilationSwitch": {
+            "title": "Ventilation Switch",
+            "type": "boolean",
+            "default": false,
+            "description": "Expose a switch to control ventilation (if supported)"
+          },
+          "allergenSwitch": {
+            "title": "Allergen Defender Switch",
+            "type": "boolean",
+            "default": false,
+            "description": "Expose a switch to control allergen defender (if supported)"
+          },
+          "outdoorTemperature": {
+            "title": "Outdoor Temperature Sensor",
+            "type": "boolean",
+            "default": false,
+            "description": "Expose outdoor temperature as a separate sensor (if available)"
+          }
+        }
+      }
+    }
+  },
+  "layout": [
+    {
+      "type": "fieldset",
+      "title": "Thermostats",
+      "expandable": false,
+      "items": [
+        {
+          "key": "thermostats",
+          "type": "array",
+          "notitle": true,
+          "buttonText": "Add Thermostat",
+          "items": [
+            "thermostats[].ipAddress"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Settings",
+      "expandable": true,
+      "items": ["pollInterval"]
+    },
+    {
+      "type": "fieldset",
+      "title": "Optional Accessories (per thermostat)",
+      "expandable": true,
+      "items": [
+        "accessories.awaySwitch",
+        "accessories.ventilationSwitch",
+        "accessories.allergenSwitch",
+        "accessories.outdoorTemperature"
+      ]
+    }
+  ]
+}

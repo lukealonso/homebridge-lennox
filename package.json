@@ -1,0 +1,40 @@
+{
+  "displayName": "Homebridge Lennox",
+  "name": "homebridge-lennox",
+  "version": "0.1.0",
+  "description": "Homebridge plugin for Lennox S30/S40/E30/M30 thermostats via local LAN connection",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "homebridge": ">=1.6.0"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "rimraf ./dist && tsc",
+    "watch": "npm run build && npm link && nodemon",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "homebridge-plugin",
+    "lennox",
+    "s30",
+    "s40",
+    "thermostat",
+    "hvac"
+  ],
+  "dependencies": {
+    "lennoxapi": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "homebridge": "^1.8.0",
+    "nodemon": "^3.0.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.3.3"
+  }
+}
+
