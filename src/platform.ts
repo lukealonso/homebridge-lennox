@@ -41,7 +41,10 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
 
   // Connected thermostats
   private thermostats: ConnectedThermostat[] = [];
+  // Failed thermostats to retry
+  private failedThermostats: ThermostatConfig[] = [];
   private pollTimer: NodeJS.Timeout | null = null;
+  private retryTimer: NodeJS.Timeout | null = null;
   private isShuttingDown = false;
 
   constructor(
@@ -88,11 +91,14 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
 
     // Connect to each thermostat
     for (const thermostatConfig of lennoxConfig.thermostats ?? []) {
-      await this.connectThermostat(thermostatConfig);
+      const success = await this.connectThermostat(thermostatConfig);
+      if (!success) {
+        this.failedThermostats.push(thermostatConfig);
+      }
     }
 
-    if (this.thermostats.length === 0) {
-      this.log.error('Failed to connect to any thermostats');
+    if (this.thermostats.length === 0 && this.failedThermostats.length === 0) {
+      this.log.error('No thermostats configured');
       return;
     }
 
@@ -101,14 +107,21 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
 
     // Start polling loop
     this.startPolling();
+
+    // Start retry loop for failed thermostats
+    if (this.failedThermostats.length > 0) {
+      this.startRetryLoop();
+    }
   }
 
   /**
    * Connect to a single thermostat
+   * Returns true if connection succeeded, false otherwise
    */
-  private async connectThermostat(thermostatConfig: ThermostatConfig): Promise<void> {
+  private async connectThermostat(thermostatConfig: ThermostatConfig): Promise<boolean> {
+    let s30api: S30API | null = null;
     try {
-      const s30api = new S30API({
+      s30api = new S30API({
         ipAddress: thermostatConfig.ipAddress,
         protocol: 'https',
       });
@@ -121,7 +134,8 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
       const system = s30api.getSystem('LCC');
       if (!system) {
         this.log.error(`Failed to get system from ${ip}`);
-        return;
+        await this.safeShutdown(s30api);
+        return false;
       }
 
       await s30api.subscribe(system);
@@ -176,8 +190,12 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
       const systemName = system.name ?? ip;
       if (!system.configComplete()) {
         this.log.warn(`${systemName}: Configuration incomplete after waiting`);
+        await this.safeShutdown(s30api);
+        return false;
       } else if (system.zones.length === 0) {
         this.log.warn(`${systemName}: No zones found after waiting`);
+        await this.safeShutdown(s30api);
+        return false;
       }
 
       this.log.info(`Connected to ${systemName} at ${ip} (${system.zones.length} zones)`);
@@ -190,8 +208,14 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
         hasResetDuringPolling: false,
       });
 
+      return true;
+
     } catch (error) {
       this.log.error(`Failed to connect to ${thermostatConfig.ipAddress}:`, (error as Error).message);
+      if (s30api) {
+        await this.safeShutdown(s30api);
+      }
+      return false;
     }
   }
 
@@ -199,43 +223,110 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
    * Register all accessories based on configuration and detected capabilities
    */
   private registerAccessories(): void {
+    for (const thermostat of this.thermostats) {
+      this.registerAccessoriesForThermostat(thermostat);
+    }
+  }
+
+  /**
+   * Register accessories for a single thermostat (used when retrying failed connections)
+   */
+  private registerAccessoriesForThermostat(thermostat: ConnectedThermostat): void {
     const lennoxConfig = this.config as LennoxS30Config;
     const accessoryConfig = lennoxConfig.accessories ?? {};
+    const { config: tConfig, system } = thermostat;
+    const systemName = system.name ?? tConfig.ipAddress;
 
-    for (const thermostat of this.thermostats) {
-      const { config: tConfig, system } = thermostat;
-      const systemName = system.name ?? tConfig.ipAddress;
-
-      // Register all active zones with HVAC capabilities
-      for (const zone of system.zones) {
-        if (zone.isZoneDisabled) {
-          this.log.debug(`${systemName}: Zone ${zone.id} (${zone.name}) is disabled, skipping`);
-          continue;
-        }
-        if (zone.heatingOption === null && zone.coolingOption === null) {
-          this.log.debug(`${systemName}: Zone ${zone.id} (${zone.name}) has no HVAC options, skipping`);
-          continue;
-        }
-        this.registerThermostatAccessory(systemName, zone);
+    // Register all active zones with HVAC capabilities
+    for (const zone of system.zones) {
+      if (zone.isZoneDisabled) {
+        this.log.debug(`${systemName}: Zone ${zone.id} (${zone.name}) is disabled, skipping`);
+        continue;
       }
-
-      // Register optional accessories
-      if (accessoryConfig.awaySwitch) {
-        this.registerAwaySwitchAccessory(systemName, system);
+      if (zone.heatingOption === null && zone.coolingOption === null) {
+        this.log.debug(`${systemName}: Zone ${zone.id} (${zone.name}) has no HVAC options, skipping`);
+        continue;
       }
-
-      if (accessoryConfig.ventilationSwitch && system.supportsVentilation()) {
-        this.registerVentilationSwitchAccessory(systemName, system);
-      }
-
-      if (accessoryConfig.allergenSwitch && system.allergenDefender !== null) {
-        this.registerAllergenSwitchAccessory(systemName, system);
-      }
-
-      if (accessoryConfig.outdoorTemperature && system.outdoorTemperature !== null) {
-        this.registerOutdoorTemperatureSensor(systemName, system);
-      }
+      this.registerThermostatAccessory(systemName, zone);
     }
+
+    // Register optional accessories
+    if (accessoryConfig.awaySwitch) {
+      this.registerAwaySwitchAccessory(systemName, system);
+    }
+
+    if (accessoryConfig.ventilationSwitch && system.supportsVentilation()) {
+      this.registerVentilationSwitchAccessory(systemName, system);
+    }
+
+    if (accessoryConfig.allergenSwitch && system.allergenDefender !== null) {
+      this.registerAllergenSwitchAccessory(systemName, system);
+    }
+
+    if (accessoryConfig.outdoorTemperature && system.outdoorTemperature !== null) {
+      this.registerOutdoorTemperatureSensor(systemName, system);
+    }
+  }
+
+  /**
+   * Start retry loop for failed thermostats
+   */
+  private startRetryLoop(): void {
+    const retryInterval = 60000; // Retry every 60 seconds
+
+    this.log.info(`Will retry ${this.failedThermostats.length} failed thermostat(s) every 60s`);
+
+    const retry = async () => {
+      if (this.isShuttingDown || this.failedThermostats.length === 0) {
+        return;
+      }
+
+      // Try to connect to each failed thermostat
+      const stillFailed: ThermostatConfig[] = [];
+
+      for (const config of this.failedThermostats) {
+        this.log.info(`Retrying connection to ${config.ipAddress}...`);
+        
+        try {
+          const success = await this.connectThermostat(config);
+
+          if (success) {
+            // Find the newly added thermostat and register its accessories
+            const thermostat = this.thermostats.find(t => t.config.ipAddress === config.ipAddress);
+            if (!thermostat) {
+              this.log.error(`Reconnected to ${config.ipAddress} but could not locate thermostat entry`);
+              stillFailed.push(config);
+              continue;
+            }
+
+            try {
+              this.registerAccessoriesForThermostat(thermostat);
+              this.log.info(`Successfully reconnected to ${thermostat.system.name ?? config.ipAddress}`);
+            } catch (regError) {
+              this.log.error(`Failed to register accessories for ${config.ipAddress}:`, (regError as Error).message);
+              await this.safeShutdown(thermostat.api);
+              this.thermostats = this.thermostats.filter(t => t !== thermostat);
+              stillFailed.push(config);
+            }
+          } else {
+            stillFailed.push(config);
+          }
+        } catch (error) {
+          this.log.error(`Unexpected error retrying ${config.ipAddress}:`, (error as Error).message);
+          stillFailed.push(config);
+        }
+      }
+
+      this.failedThermostats = stillFailed;
+
+      // Schedule next retry if there are still failed thermostats
+      if (this.failedThermostats.length > 0 && !this.isShuttingDown) {
+        this.retryTimer = setTimeout(retry, retryInterval);
+      }
+    };
+
+    // Start first retry after the interval
+    this.retryTimer = setTimeout(retry, retryInterval);
   }
 
   /**
@@ -278,7 +369,7 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
     // Use system name to ensure uniqueness across multiple thermostats
     const uniqueIdInput = `lennox-away-${systemName}`;
     const uuid = this.api.hap.uuid.generate(uniqueIdInput);
-    const displayName = this.thermostats.length > 1 ? `${systemName} Away` : 'Away Mode';
+    const displayName = `${systemName} Away`;
     this.log.info(`Registering away switch: ${displayName}, uniqueId=${uniqueIdInput}, UUID=${uuid}`);
 
     let accessory = this.accessories.find(acc => acc.UUID === uuid);
@@ -299,7 +390,7 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
    */
   private registerVentilationSwitchAccessory(systemName: string, system: LennoxSystem): void {
     const uuid = this.api.hap.uuid.generate(`lennox-ventilation-${systemName}`);
-    const displayName = this.thermostats.length > 1 ? `${systemName} Ventilation` : 'Ventilation';
+    const displayName = `${systemName} Ventilation`;
 
     let accessory = this.accessories.find(acc => acc.UUID === uuid);
 
@@ -319,7 +410,7 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
    */
   private registerAllergenSwitchAccessory(systemName: string, system: LennoxSystem): void {
     const uuid = this.api.hap.uuid.generate(`lennox-allergen-${systemName}`);
-    const displayName = this.thermostats.length > 1 ? `${systemName} Allergen Defender` : 'Allergen Defender';
+    const displayName = `${systemName} Allergen Defender`;
 
     let accessory = this.accessories.find(acc => acc.UUID === uuid);
 
@@ -339,7 +430,7 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
    */
   private registerOutdoorTemperatureSensor(systemName: string, system: LennoxSystem): void {
     const uuid = this.api.hap.uuid.generate(`lennox-outdoor-temp-${systemName}`);
-    const displayName = this.thermostats.length > 1 ? `${systemName} Outdoor` : 'Outdoor Temperature';
+    const displayName = `${systemName} Outdoor`;
 
     let accessory = this.accessories.find(acc => acc.UUID === uuid);
 
@@ -422,6 +513,17 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
   }
 
   /**
+   * Safely shutdown a Lennox API instance, ignoring errors
+   */
+  private async safeShutdown(api: S30API): Promise<void> {
+    try {
+      await api.shutdown();
+    } catch (err) {
+      this.log.debug('Error during safe shutdown:', (err as Error).message);
+    }
+  }
+
+  /**
    * Shutdown the platform
    */
   private async shutdown(): Promise<void> {
@@ -430,6 +532,11 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
+    }
+
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
     }
 
     // Shutdown all thermostats

@@ -7,6 +7,11 @@
   "schema": {
     "type": "object",
     "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Lennox"
+      },
       "thermostats": {
         "type": "array",
         "items": {
@@ -15,10 +20,10 @@
             "ipAddress": {
               "title": "Host",
               "type": "string",
-              "required": true,
               "description": "IP address or hostname of the thermostat"
             }
-          }
+          },
+          "required": ["ipAddress"]
         },
         "default": []
       },
