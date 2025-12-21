@@ -1,7 +1,7 @@
 {
   "displayName": "Homebridge Lennox",
   "name": "homebridge-lennox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Homebridge plugin for Lennox S30/S40/E30/M30 thermostats via local LAN connection",
   "license": "MIT",
   "author": "Luke Alonso",
