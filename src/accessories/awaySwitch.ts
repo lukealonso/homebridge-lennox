@@ -45,10 +45,10 @@ export class AwaySwitchAccessory {
    * Update characteristics from system state (called via callback)
    */
   private updateCharacteristics(): void {
-    this.service.updateCharacteristic(
-      this.platform.Characteristic.On,
-      this.getOn(),
-    );
+    const onValue = this.getOn();
+    this.platform.log.debug(`Away Switch ${this.system.name}: publishing On=${onValue}`);
+    this.service.getCharacteristic(this.platform.Characteristic.On)
+      .sendEventNotification(onValue);
   }
 
   /**
@@ -73,4 +73,3 @@ export class AwaySwitchAccessory {
     }
   }
 }
-

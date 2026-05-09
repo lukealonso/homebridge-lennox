@@ -452,6 +452,7 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
     const lennoxConfig = this.config as LennoxS30Config;
     const pollInterval = (lennoxConfig.pollInterval ?? 30) * 1000;
     const maxEmptyPolls = 10; // Reset after 10 consecutive empty polls
+    const maxMessagesPerPoll = 100;
 
     this.log.debug(`Starting poll loop with ${pollInterval / 1000}s interval`);
 
@@ -461,7 +462,23 @@ export class LennoxS30Platform implements DynamicPlatformPlugin {
       // Poll all thermostats
       for (const thermostat of this.thermostats) {
         try {
-          const gotMessage = await thermostat.api.messagePump();
+          let gotMessage = false;
+          let messagesProcessed = 0;
+
+          while (messagesProcessed < maxMessagesPerPoll) {
+            const receivedMessage = await thermostat.api.messagePump();
+            if (!receivedMessage) {
+              break;
+            }
+
+            gotMessage = true;
+            messagesProcessed++;
+          }
+
+          if (messagesProcessed === maxMessagesPerPoll) {
+            const name = thermostat.system.name ?? thermostat.config.ipAddress;
+            this.log.warn(`${name}: Reached poll drain limit (${maxMessagesPerPoll}), more messages may be queued`);
+          }
           
           if (gotMessage) {
             // Reset empty poll counter on success
